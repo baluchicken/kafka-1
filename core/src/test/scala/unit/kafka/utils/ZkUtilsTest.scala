@@ -17,9 +17,12 @@
 
 package kafka.utils
 
+import kafka.consumer.ConsumerThreadId
 import kafka.zk.ZooKeeperTestHarness
 import org.junit.Assert._
 import org.junit.Test
+
+import scala.collection.{Map, Seq, Set}
 
 class ZkUtilsTest extends ZooKeeperTestHarness {
 
@@ -73,4 +76,22 @@ class ZkUtilsTest extends ZooKeeperTestHarness {
     val clusterId = "test"
     assertEquals(zkUtils.ClusterId.fromJson(zkUtils.ClusterId.toJson(clusterId)), clusterId)
   }
+
+  @Test
+  def testGetConsumersPerTopicMap(): Unit = {
+    val input: Seq[(String, Map[String, Set[ConsumerThreadId]])] = Seq(("g1c3", Map("topic-1" -> Set(ConsumerThreadId("g1c3", 0)))),
+      ("g3c6", Map("topic-1" -> Set(ConsumerThreadId("g3c6", 0)))))
+    val output: collection.mutable.HashMap[String, List[ConsumerThreadId]] =
+      collection.mutable.HashMap("topic-1" -> List(ConsumerThreadId("g1c3", 0), ConsumerThreadId("g3c6", 0)))
+    assertEquals(ZkUtils.getConsumersPerTopicMap(input), output)
+  }
+
+  @Test
+  def testGetTopicPartitionMap(): Unit = {
+    val input: Seq[(String, Option[String])] =  Seq(("topic-1", Option("{\"version\":1,\"partitions\":{\"45\":[0],\"34\":[0],\"67\":[0]}}")))
+    val output: collection.mutable.HashMap[String, Map[Int, Seq[Int]]] =
+      collection.mutable.HashMap("topic-1" -> Map(45 -> List(0), 34 -> List(0), 67 -> List(0)))
+    assertEquals(ZkUtils.getTopicPartitionMap(input), output)
+  }
+
 }

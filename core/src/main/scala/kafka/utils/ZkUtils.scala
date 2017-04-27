@@ -224,6 +224,43 @@ object ZkUtils {
     ))
   }
 
+  def getConsumersPerTopicMap(consumerWithTopicCount: Seq[(String, Map[String, Set[ConsumerThreadId]])]): mutable.HashMap[String, List[ConsumerThreadId]] = {
+    val consumersPerTopicMap = new mutable.HashMap[String, List[ConsumerThreadId]]
+    for ((_, getConsumerThreadIdsPerTopic) <- consumerWithTopicCount) {
+      for ((topic, consumerThreadIdSet) <- getConsumerThreadIdsPerTopic) {
+        for (consumerThreadId <- consumerThreadIdSet)
+          consumersPerTopicMap.get(topic) match {
+            case Some(curConsumers) => consumersPerTopicMap.put(topic, consumerThreadId :: curConsumers)
+            case _ => consumersPerTopicMap.put(topic, List(consumerThreadId))
+          }
+      }
+    }
+    for ( (topic, consumerList) <- consumersPerTopicMap )
+      consumersPerTopicMap.put(topic, consumerList.sortWith((s,t) => s < t))
+    consumersPerTopicMap
+  }
+
+  def getTopicPartitionMap(topicPartition: Seq[(String, Option[String])]): mutable.HashMap[String, Map[Int, Seq[Int]]] = {
+    val ret = new mutable.HashMap[String, Map[Int, Seq[Int]]]()
+     for ((topic, jsonPartitionMapOpt) <- topicPartition) {
+      val partitionMap = jsonPartitionMapOpt match {
+        case Some(jsonPartitionMap) =>
+          Json.parseFull(jsonPartitionMap) match {
+            case Some(m) => m.asInstanceOf[Map[String, Any]].get("partitions") match {
+              case Some(replicaMap) =>
+                val m1 = replicaMap.asInstanceOf[Map[String, Seq[Int]]]
+                m1.map(p => (p._1.toInt, p._2))
+              case None => Map[Int, Seq[Int]]()
+            }
+            case None => Map[Int, Seq[Int]]()
+          }
+        case None => Map[Int, Seq[Int]]()
+      }
+//      debug("Partition map for /brokers/topics/%s is %s".format(topic, partitionMap))
+      ret += (topic -> partitionMap)
+    }
+    ret
+  }
 }
 
 class ZkUtils(val zkClient: ZkClient,
@@ -729,26 +766,7 @@ class ZkUtils(val zkClient: ZkClient,
   }
 
   def getPartitionAssignmentForTopics(topics: Seq[String]): mutable.Map[String, collection.Map[Int, Seq[Int]]] = {
-    val ret = new mutable.HashMap[String, Map[Int, Seq[Int]]]()
-    topics.foreach{ topic =>
-      val jsonPartitionMapOpt = readDataMaybeNull(getTopicPath(topic))._1
-      val partitionMap = jsonPartitionMapOpt match {
-        case Some(jsonPartitionMap) =>
-          Json.parseFull(jsonPartitionMap) match {
-            case Some(m) => m.asInstanceOf[Map[String, Any]].get("partitions") match {
-              case Some(replicaMap) =>
-                val m1 = replicaMap.asInstanceOf[Map[String, Seq[Int]]]
-                m1.map(p => (p._1.toInt, p._2))
-              case None => Map[Int, Seq[Int]]()
-            }
-            case None => Map[Int, Seq[Int]]()
-          }
-        case None => Map[Int, Seq[Int]]()
-      }
-      debug("Partition map for /brokers/topics/%s is %s".format(topic, partitionMap))
-      ret += (topic -> partitionMap)
-    }
-    ret
+    getTopicPartitionMap(topics.map(topic => (topic, readDataMaybeNull(getTopicPath(topic))._1)))
   }
 
   def getPartitionsForTopics(topics: Seq[String]): mutable.Map[String, Seq[Int]] = {
@@ -825,20 +843,8 @@ class ZkUtils(val zkClient: ZkClient,
   def getConsumersPerTopic(group: String, excludeInternalTopics: Boolean): mutable.Map[String, List[ConsumerThreadId]] = {
     val dirs = new ZKGroupDirs(group)
     val consumers = getChildrenParentMayNotExist(dirs.consumerRegistryDir)
-    val consumersPerTopicMap = new mutable.HashMap[String, List[ConsumerThreadId]]
-    for (consumer <- consumers) {
-      val topicCount = TopicCount.constructTopicCount(group, consumer, this, excludeInternalTopics)
-      for ((topic, consumerThreadIdSet) <- topicCount.getConsumerThreadIdsPerTopic) {
-        for (consumerThreadId <- consumerThreadIdSet)
-          consumersPerTopicMap.get(topic) match {
-            case Some(curConsumers) => consumersPerTopicMap.put(topic, consumerThreadId :: curConsumers)
-            case _ => consumersPerTopicMap.put(topic, List(consumerThreadId))
-          }
-      }
-    }
-    for ( (topic, consumerList) <- consumersPerTopicMap )
-      consumersPerTopicMap.put(topic, consumerList.sortWith((s,t) => s < t))
-    consumersPerTopicMap
+    val consumerWithTopicCount = consumers.map(consumer => (consumer,TopicCount.constructTopicCount(group, consumer, this, excludeInternalTopics).getConsumerThreadIdsPerTopic))
+    getConsumersPerTopicMap(consumerWithTopicCount)
   }
 
   @deprecated("This method has been deprecated and will be removed in a future release.", "0.11.0.0")
